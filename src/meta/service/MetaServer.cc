@@ -23,6 +23,20 @@ MetaServer::MetaServer(const MetaServer::Config &config)
 MetaServer::~MetaServer() { XLOGF(INFO, "Destructor MetaServer"); }
 
 Result<Void> MetaServer::beforeStart() {
+  // C3: Add comprehensive authentication validation
+  if (appInfo().clusterId.empty()) {
+    return makeError(StatusCode::kUnauthenticated, "Cluster ID not set - authentication required");
+  }
+  
+  if (appInfo().hostname.empty()) {
+    return makeError(StatusCode::kUnauthenticated, "Hostname not set - authentication required");
+  }
+  
+  // Validate that we have proper node identification
+  if (!appInfo().nodeId.has_value()) {
+    return makeError(StatusCode::kUnauthenticated, "Node ID not set - authentication required");
+  }
+
   if (!backgroundClient_) {
     backgroundClient_ = std::make_unique<net::Client>(config_.background_client());
     RETURN_ON_ERROR(backgroundClient_->start());

@@ -106,10 +106,20 @@ CoTryTask<size_t> SessionManager::ScanTask::run(SessionManager &manager) {
     // filter dead sessions
     std::vector<FileSession> deadSessions;
     for (auto &session : *sessions) {
-      if (prune_->sessions.rlock()->contains(session.sessionId)) {
-        // need prune this session
-        XLOGF(INFO, "Need prune session {}", session);
-        prune_->sessions.wlock()->erase(session.sessionId);
+      // C2: Fix race condition by using single lock for both read and write
+      bool needsPruning = false;
+      {
+        auto wlock = prune_->sessions.wlock();  // Use write lock for both check and erase
+        if (wlock->contains(session.sessionId)) {
+          // need prune this session
+          XLOGF(INFO, "Need prune session {}", session);
+          wlock->erase(session.sessionId);
+          needsPruning = true;
+        }
+      }
+      
+      if (needsPruning) {
+        deadSessions.push_back(session);
       } else {
         // check client is active or not
         if (active->contains(session.clientId)) {

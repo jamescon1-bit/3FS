@@ -46,6 +46,18 @@ RUN wget -O- ${LIBFUSE_DOWNLOAD_URL}        |\
   ninja && ninja install &&\
   rm -f -r /tmp/fuse-${LIBFUSE_VERSION}*
 
-# Install Rust
+# C1: Create non-root user for security
+RUN groupadd -r 3fsuser && useradd -r -g 3fsuser -m -d /home/3fsuser -s /bin/bash 3fsuser
+
+# Install Rust as root, then setup for non-root user
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Setup Rust for non-root user
+USER 3fsuser
+WORKDIR /home/3fsuser
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/home/3fsuser/.cargo/bin:${PATH}"
+
+# Set working directory and user
+WORKDIR /home/3fsuser/app

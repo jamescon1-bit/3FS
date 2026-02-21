@@ -100,16 +100,29 @@ BufferPool::Buffer::~Buffer() {
 }
 
 Result<net::RDMABuf> BufferPool::Buffer::tryAllocate(uint32_t size) {
+  // C4: Add comprehensive bounds checking
+  if (size == 0) {
+    return makeError(StorageCode::kInvalidArgument, "Buffer size cannot be zero");
+  }
+  
+  // Check for unreasonably large allocations that could cause memory exhaustion
+  constexpr uint32_t MAX_REASONABLE_SIZE = 1024 * 1024 * 1024; // 1GB limit
+  if (size > MAX_REASONABLE_SIZE) {
+    return makeError(StorageCode::kBufferSizeExceeded, 
+                     "Requested size {} exceeds maximum reasonable size {}", size, MAX_REASONABLE_SIZE);
+  }
+
   if (indices_.empty() || current_.size() < size) {
     if (UNLIKELY(size > pool_->rdmabufSize_)) {
-      return makeError(StorageCode::kBufferSizeExceeded);
+      return makeError(StorageCode::kBufferSizeExceeded,
+                       "Requested size {} exceeds buffer size {}", size, pool_->rdmabufSize_);
     }
     if (LIKELY(pool_->semaphore_.try_wait())) {
       auto index = pool_->allocate();
       indices_.push_back(index);
       current_ = index.buffer;
     } else {
-      return makeError(RPCCode::kRDMANoBuf);
+      return makeError(RPCCode::kRDMANoBuf, "No RDMA buffers available");
     }
   }
   auto ret = current_.takeFirst(size);
@@ -119,9 +132,22 @@ Result<net::RDMABuf> BufferPool::Buffer::tryAllocate(uint32_t size) {
 }
 
 CoTryTask<net::RDMABuf> BufferPool::Buffer::allocate(uint32_t size) {
+  // C4: Add comprehensive bounds checking
+  if (size == 0) {
+    co_return makeError(StorageCode::kInvalidArgument, "Buffer size cannot be zero");
+  }
+  
+  // Check for unreasonably large allocations
+  constexpr uint32_t MAX_REASONABLE_SIZE = 1024 * 1024 * 1024; // 1GB limit
+  if (size > MAX_REASONABLE_SIZE) {
+    co_return makeError(StorageCode::kBufferSizeExceeded, 
+                        "Requested size {} exceeds maximum reasonable size {}", size, MAX_REASONABLE_SIZE);
+  }
+
   if (indices_.empty() || current_.size() < size) {
     if (UNLIKELY(size > pool_->bigRdmabufSize_)) {
-      co_return makeError(StorageCode::kBufferSizeExceeded);
+      co_return makeError(StorageCode::kBufferSizeExceeded,
+                          "Requested size {} exceeds big buffer size {}", size, pool_->bigRdmabufSize_);
     } else if (UNLIKELY(size > pool_->rdmabufSize_)) {
       co_await pool_->bigSemaphore_.co_wait();
       auto index = pool_->allocateBig();

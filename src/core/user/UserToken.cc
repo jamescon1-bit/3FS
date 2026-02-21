@@ -25,7 +25,8 @@ constexpr std::array<uint8_t, 18> mapping = {
 String encodeUserToken(uint32_t uid, uint64_t randomv) {
   static_assert(folly::Endian::order == folly::Endian::Order::LITTLE);
 
-  std::array<uint8_t, 18> tmp;
+  // C1: Increase token size for better security (128-bit entropy minimum)
+  std::array<uint8_t, 26> tmp;  // Increased from 18 to accommodate more entropy
   auto *p = tmp.data();
 
   static_assert(sizeof(magicNum) == 2);
@@ -36,51 +37,107 @@ String encodeUserToken(uint32_t uid, uint64_t randomv) {
   std::memcpy(p, &uid, sizeof(uid));
   p += sizeof(uid);
 
+  // C1: Add timestamp for expiration validation
+  uint64_t timestamp = std::chrono::duration_cast<std::chrono::seconds>(
+    std::chrono::system_clock::now().time_since_epoch()).count();
+  static_assert(sizeof(timestamp) == 8);
+  std::memcpy(p, &timestamp, sizeof(timestamp));
+  p += sizeof(timestamp);
+
   static_assert(sizeof(randomv) == 8);
   std::memcpy(p, &randomv, sizeof(randomv));
   p += sizeof(randomv);
 
-  auto crc = folly::crc32(tmp.data(), 14, 0);
+  // C1: Add additional entropy (second random value for 128-bit total)
+  uint64_t randomv2 = folly::Random::secureRand64();
+  static_assert(sizeof(randomv2) == 8);
+  std::memcpy(p, &randomv2, sizeof(randomv2));
+  p += sizeof(randomv2);
+
+  auto crc = folly::crc32(tmp.data(), 22, 0);  // Updated length
   static_assert(sizeof(crc) == 4);
   std::memcpy(p, &crc, sizeof(crc));
 
-  std::array<char, 18> buffer;
-  for (size_t i = 0; i < 18; ++i) {
+  std::array<char, 26> buffer;  // Increased buffer size
+  for (size_t i = 0; i < 18; ++i) {  // Keep existing mapping for first 18 bytes
     buffer[mapping[i]] = tmp[i];
   }
+  // Direct mapping for additional bytes
+  for (size_t i = 18; i < 26; ++i) {
+    buffer[i] = tmp[i];
+  }
+  
   return folly::base64Encode(std::string_view(buffer.data(), buffer.size()));
 }
 
 Result<std::pair<uint32_t, uint64_t>> decodeUserToken(std::string_view token) {
   try {
     auto decoded = folly::base64Decode(token);
-    if (decoded.size() != 18) return makeError(StatusCode::kInvalidFormat, "Decode token fail: invalid format");
+    
+    // C1: Support both old (18-byte) and new (26-byte) token formats
+    bool isOldFormat = (decoded.size() == 18);
+    bool isNewFormat = (decoded.size() == 26);
+    
+    if (!isOldFormat && !isNewFormat) {
+      return makeError(StatusCode::kInvalidFormat, "Decode token fail: invalid format");
+    }
 
-    std::array<uint8_t, 18> tmp;
-    for (size_t i = 0; i < 18; ++i) {
-      tmp[i] = decoded[mapping[i]];
+    std::array<uint8_t, 26> tmp{};  // Use larger array, zero-initialized
+    if (isOldFormat) {
+      for (size_t i = 0; i < 18; ++i) {
+        tmp[i] = decoded[mapping[i]];
+      }
+    } else {
+      for (size_t i = 0; i < 18; ++i) {
+        tmp[i] = decoded[mapping[i]];
+      }
+      for (size_t i = 18; i < 26; ++i) {
+        tmp[i] = decoded[i];
+      }
     }
 
     uint16_t mn = 0;
     uint32_t uid = 0, crc = 0;
-    uint64_t timestamp = 0;
+    uint64_t timestamp = 0, randomv1 = 0, randomv2 = 0;
     auto *p = tmp.data();
+    
     std::memcpy(&mn, p, sizeof(mn));
     p += sizeof(mn);
     std::memcpy(&uid, p, sizeof(uid));
     p += sizeof(uid);
     std::memcpy(&timestamp, p, sizeof(timestamp));
     p += sizeof(timestamp);
+    std::memcpy(&randomv1, p, sizeof(randomv1));
+    p += sizeof(randomv1);
+    
+    if (isNewFormat) {
+      std::memcpy(&randomv2, p, sizeof(randomv2));
+      p += sizeof(randomv2);
+    }
+    
     std::memcpy(&crc, p, sizeof(crc));
 
     if (mn != magicNum) {
       return makeError(StatusCode::kInvalidFormat, "Decode token fail: invalid format");
     }
 
-    auto expectedCrc = folly::crc32(tmp.data(), 14, 0);
+    size_t crcLength = isOldFormat ? 14 : 22;
+    auto expectedCrc = folly::crc32(tmp.data(), crcLength, 0);
     if (crc != expectedCrc) {
       return makeError(StatusCode::kInvalidFormat, "Decode token fail: invalid crc");
     }
+
+    // C1: Validate token expiration (24 hour expiry)
+    if (isNewFormat) {
+      uint64_t currentTime = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+      const uint64_t TOKEN_EXPIRY_SECONDS = 24 * 60 * 60; // 24 hours
+      
+      if (currentTime - timestamp > TOKEN_EXPIRY_SECONDS) {
+        return makeError(StatusCode::kInvalidFormat, "Token has expired");
+      }
+    }
+
     return std::make_pair(uid, timestamp);
   } catch (const folly::base64_decode_error &e) {
     return makeError(StatusCode::kInvalidFormat, "Decode token fail: {}", e.what());

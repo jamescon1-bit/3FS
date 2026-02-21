@@ -97,7 +97,8 @@ struct RcInode {
   };
 
   Inode inode;
-  int refcount;
+  // C3: Fix race conditions by making refcount atomic
+  std::atomic<int> refcount;
   std::atomic<int> opened;
 
   std::mutex wbMtx;
