@@ -9,6 +9,7 @@ namespace hf3fs::net {
 
 struct RDMATransmissionReq {
   SERDE_STRUCT_FIELD(uuid, size_t{});
+  SERDE_STRUCT_FIELD(authToken, std::string{});  // C5: Add authentication token field
 };
 
 struct RDMATransmissionRsp {

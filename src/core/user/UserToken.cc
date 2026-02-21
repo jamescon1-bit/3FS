@@ -6,6 +6,7 @@
 #include <folly/lang/Bits.h>
 
 #include "fdb/FDBTransaction.h"
+#include "common/utils/LogUtil.h"  // For deprecation warning logging
 
 namespace hf3fs::core {
 namespace {
@@ -135,6 +136,13 @@ Result<std::pair<uint32_t, uint64_t>> decodeUserToken(std::string_view token) {
       
       if (currentTime - timestamp > TOKEN_EXPIRY_SECONDS) {
         return makeError(StatusCode::kInvalidFormat, "Token has expired");
+      }
+    } else {
+      // C1 Migration: Add deprecation warning for old token format
+      static std::atomic<uint64_t> oldTokenWarningCount{0};
+      auto count = oldTokenWarningCount.fetch_add(1);
+      if (count % 100 == 0) {  // Log every 100th occurrence to avoid spam
+        XLOGF(WARN, "Old token format detected (count: {}). Please migrate to new token format. Support will be removed in a future version.", count + 1);
       }
     }
 

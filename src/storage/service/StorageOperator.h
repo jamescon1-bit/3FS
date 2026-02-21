@@ -146,6 +146,10 @@ class StorageOperator {
  private:
   friend class ReliableUpdate;
 
+  // C6: Helper method for storage authorization checks
+  Result<Void> checkStorageAuthorization(const ServiceRequestContext &requestCtx, 
+                                        const VersionedChainId &vChainId) const;
+
   ConstructLog<"storage::StorageOperator"> constructLog_;
   const Config &config_;
   Components &components_;

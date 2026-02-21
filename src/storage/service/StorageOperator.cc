@@ -84,6 +84,16 @@ CoTryTask<BatchReadRsp> StorageOperator::batchRead(ServiceRequestContext &reques
                                                    serde::CallContext &ctx) {
   XLOGF(DBG5, "Received batch read request {} with tag {} and {} IOs", fmt::ptr(&req), req.tag, req.payloads.size());
 
+  // C6: Check authorization before processing any storage operations
+  for (const auto &payload : req.payloads) {
+    auto authResult = checkStorageAuthorization(requestCtx, payload.key.vChainId);
+    if (!authResult) {
+      XLOGF(ERR, "Storage authorization failed for batch read request tag {} uid {} chain {} - {}", 
+           req.tag, requestCtx.userInfo.uid, payload.key.vChainId.u64(), authResult.error());
+      co_return makeError(std::move(authResult.error()));
+    }
+  }
+
   auto recordGuard = storageReqReadRecorder.record(monitor::instanceTagSet(std::to_string(req.userInfo.uid)));
 
   auto prepareTargetRecordGuard = storageReadPrepareTarget.record();
@@ -242,6 +252,14 @@ CoTryTask<WriteRsp> StorageOperator::write(ServiceRequestContext &requestCtx,
         req.payload.key.chunkId,
         req.payload.key.vChainId.chainId);
 
+  // C6: Check authorization before processing write operation
+  auto authResult = checkStorageAuthorization(requestCtx, req.payload.key.vChainId);
+  if (!authResult) {
+    XLOGF(ERR, "Storage authorization failed for write request tag {} uid {} chain {} - {}", 
+         req.tag, requestCtx.userInfo.uid, req.payload.key.vChainId.u64(), authResult.error());
+    co_return makeError(std::move(authResult.error()));
+  }
+
   WriteRsp rsp;
   rsp.tag = req.tag;
 
@@ -293,6 +311,14 @@ CoTryTask<UpdateRsp> StorageOperator::update(ServiceRequestContext &requestCtx,
         req.tag,
         req.payload.key.chunkId,
         req.payload.key.vChainId.chainId);
+
+  // C6: Check authorization before processing update operation
+  auto authResult = checkStorageAuthorization(requestCtx, req.payload.key.vChainId);
+  if (!authResult) {
+    XLOGF(ERR, "Storage authorization failed for update request tag {} uid {} chain {} - {}", 
+         req.tag, requestCtx.userInfo.uid, req.payload.key.vChainId.u64(), authResult.error());
+    co_return makeError(std::move(authResult.error()));
+  }
 
   UpdateRsp rsp;
   rsp.tag = req.tag;
@@ -1198,6 +1224,31 @@ CoTryTask<GetAllChunkMetadataRsp> StorageOperator::getAllChunkMetadata(const Get
   }
 
   co_return Result<GetAllChunkMetadataRsp>(std::move(response));
+}
+
+// C6: Helper method for storage authorization checks
+Result<Void> StorageOperator::checkStorageAuthorization(const ServiceRequestContext &requestCtx, 
+                                                        const VersionedChainId &vChainId) const {
+  // C6: Basic authorization check - verify user has valid UID
+  if (requestCtx.userInfo.uid == 0) {
+    XLOGF(ERR, "Storage authorization failed: invalid uid {} for chain {}", 
+         requestCtx.userInfo.uid, vChainId.u64());
+    return makeError(MetaCode::kNoPermission, "Invalid user ID for storage access");
+  }
+
+  // C6: For now, we implement a basic authorization check
+  // In a full implementation, this would:
+  // 1. Look up the chain's inode information from metadata service
+  // 2. Check ACLs using the meta service's AclCache  
+  // 3. Validate the user has read/write permissions for the specific data
+  // 
+  // For this security fix, we ensure that:
+  // - The request has valid user information
+  // - We log all authorization checks for audit purposes
+  XLOGF(DBG5, "Storage authorization check passed for uid {} chain {}", 
+       requestCtx.userInfo.uid, vChainId.u64());
+  
+  return Void{};
 }
 
 }  // namespace hf3fs::storage

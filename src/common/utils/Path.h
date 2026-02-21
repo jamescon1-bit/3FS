@@ -5,6 +5,7 @@
 #include <fmt/format.h>
 #include <stdexcept>
 #include <string>
+#include "common/utils/Result.h"  // For Result<> pattern
 
 namespace hf3fs {
 
@@ -12,17 +13,20 @@ class SecurePath {
 private:
   boost::filesystem::path path_;
   
+  // Private constructor - use create() factory method instead
+  explicit SecurePath(const boost::filesystem::path& path) : path_(path) {}
+  
 public:
-  // C2: Add secure path validation wrapper
-  explicit SecurePath(const std::string& path_str) {
+  // C2: Factory method for secure path creation that returns Result<> instead of throwing
+  static Result<SecurePath> create(const std::string& path_str) {
     // Validate and sanitize the path
     if (path_str.empty()) {
-      throw std::invalid_argument("Path cannot be empty");
+      return makeError(StatusCode::kInvalidArg, "Path cannot be empty");
     }
     
     // Check for null bytes (potential security issue)
     if (path_str.find('\0') != std::string::npos) {
-      throw std::invalid_argument("Path cannot contain null bytes");
+      return makeError(StatusCode::kInvalidArg, "Path cannot contain null bytes");
     }
     
     // Detect path traversal attempts
@@ -30,22 +34,23 @@ public:
         path_str.find("..\\") != std::string::npos ||
         path_str.find("/..") != std::string::npos ||
         path_str.find("\\..") != std::string::npos) {
-      throw std::invalid_argument("Path traversal detected");
+      return makeError(StatusCode::kInvalidArg, "Path traversal detected");
     }
     
     // Check for excessive length
     if (path_str.length() > 4096) {
-      throw std::invalid_argument("Path too long");
+      return makeError(StatusCode::kInvalidArg, "Path too long");
     }
     
     try {
-      path_ = boost::filesystem::path(path_str);
+      boost::filesystem::path path = boost::filesystem::path(path_str);
       // Canonicalize to resolve any remaining issues
-      if (boost::filesystem::exists(path_)) {
-        path_ = boost::filesystem::canonical(path_);
+      if (boost::filesystem::exists(path)) {
+        path = boost::filesystem::canonical(path);
       }
+      return SecurePath(path);
     } catch (const boost::filesystem::filesystem_error& e) {
-      throw std::invalid_argument("Invalid path: " + std::string(e.what()));
+      return makeError(StatusCode::kInvalidArg, "Invalid path: {}", e.what());
     }
   }
   
@@ -58,8 +63,12 @@ public:
 using Path = boost::filesystem::path;
 
 // Utility function to validate paths
-inline void validatePath(const std::string& path) {
-  SecurePath validated(path);  // This will throw if invalid
+inline Result<Void> validatePath(const std::string& path) {
+  auto result = SecurePath::create(path);
+  if (!result) {
+    return makeError(std::move(result.error()));
+  }
+  return Void{};
 }
 
 }  // namespace hf3fs

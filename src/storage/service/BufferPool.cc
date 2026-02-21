@@ -106,7 +106,7 @@ Result<net::RDMABuf> BufferPool::Buffer::tryAllocate(uint32_t size) {
   }
   
   // Check for unreasonably large allocations that could cause memory exhaustion
-  constexpr uint32_t MAX_REASONABLE_SIZE = 1024 * 1024 * 1024; // 1GB limit
+  constexpr size_t MAX_REASONABLE_SIZE = 1024UL * 1024UL * 1024UL; // 1GB limit, fix potential overflow
   if (size > MAX_REASONABLE_SIZE) {
     return makeError(StorageCode::kBufferSizeExceeded, 
                      "Requested size {} exceeds maximum reasonable size {}", size, MAX_REASONABLE_SIZE);
@@ -138,7 +138,7 @@ CoTryTask<net::RDMABuf> BufferPool::Buffer::allocate(uint32_t size) {
   }
   
   // Check for unreasonably large allocations
-  constexpr uint32_t MAX_REASONABLE_SIZE = 1024 * 1024 * 1024; // 1GB limit
+  constexpr size_t MAX_REASONABLE_SIZE = 1024UL * 1024UL * 1024UL; // 1GB limit, fix potential overflow
   if (size > MAX_REASONABLE_SIZE) {
     co_return makeError(StorageCode::kBufferSizeExceeded, 
                         "Requested size {} exceeds maximum reasonable size {}", size, MAX_REASONABLE_SIZE);
