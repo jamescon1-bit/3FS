@@ -1,677 +1,796 @@
-#!/usr/bin/env python3
 """
-Holiday Decor Planner - Complete commercial holiday decoration project manager
-Cambridge NY commercial AI module for managing holiday decor installations in NYC
+Cambridge NY Holiday Decor Planner
+Comprehensive project manager for commercial holiday installations across NYC.
+
+Features:
+- Full project lifecycle management from intake to takedown
+- Design themes and material tracking
+- Installation scheduling and crew management
+- Budget tracking and P&L per project
+- Multi-project dashboard for concurrent installations
+- Timeline management for holiday season workflow
 """
 
-import os
-import json
-import sqlite3
-from datetime import datetime, timedelta, date
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Set
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, field
+from datetime import datetime, date, timedelta
+from decimal import Decimal
 from enum import Enum
-import logging
-from decimal import Decimal, ROUND_HALF_UP
+from typing import Dict, List, Optional, Tuple, Union
+import json
+import uuid
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-class ProjectPhase(Enum):
-    """Project lifecycle phases"""
-    REQUIREMENTS = "requirements"
+class ProjectStatus(Enum):
+    INTAKE = "intake"
     DESIGN = "design"
+    APPROVED = "approved"
     SOURCING = "sourcing"
-    SCHEDULING = "scheduling"
-    INSTALLATION = "installation"
-    MAINTENANCE = "maintenance"
-    TAKEDOWN = "takedown"
+    SCHEDULED = "scheduled"
+    IN_PROGRESS = "in_progress"
+    INSTALLED = "installed"
+    MAINTAINED = "maintained"
+    TAKEDOWN_SCHEDULED = "takedown_scheduled"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
 
-class DesignTheme(Enum):
-    """Available design themes"""
+
+class DecorTheme(Enum):
     CLASSIC_CHRISTMAS = "classic_christmas"
     WINTER_WONDERLAND = "winter_wonderland"
     MODERN_MINIMALIST = "modern_minimalist"
     FESTIVE_CORPORATE = "festive_corporate"
     LUXURY_GOLD = "luxury_gold"
-    NATURAL_RUSTIC = "natural_rustic"
-    LED_MODERN = "led_modern"
+    NYC_LIGHTS = "nyc_lights"
+    HANUKKAH = "hanukkah"
+    MULTI_FAITH = "multi_faith"
+    CUSTOM = "custom"
 
-class MaterialType(Enum):
-    """Types of decoration materials"""
+
+class MaterialCategory(Enum):
     LIGHTS = "lights"
     ORNAMENTS = "ornaments"
-    GARLANDS = "garlands"
+    GARLAND = "garland"
     WREATHS = "wreaths"
-    TREES_REAL = "trees_real"
-    TREES_ARTIFICIAL = "trees_artificial"
+    TREES = "trees"
     RIBBON = "ribbon"
-    SPECIALTY = "specialty"
+    BOWS = "bows"
+    INSTALLATIONS = "installations"
+    ELECTRICAL = "electrical"
+    HARDWARE = "hardware"
 
-class CrewSize(Enum):
-    """Standard crew sizes"""
-    SMALL = 2  # 2-person crew
-    MEDIUM = 3  # 3-person crew
-    LARGE = 4   # 4-person crew
 
-class InstallDuration(Enum):
-    """Installation duration estimates"""
-    SHORT = 4    # 4 hours
-    MEDIUM = 6   # 6 hours
-    LONG = 8     # 8 hours
+class ProjectSize(Enum):
+    SMALL = "small"      # <2000 sq ft
+    MEDIUM = "medium"    # 2000-5000 sq ft
+    LARGE = "large"      # 5000-10000 sq ft
+    ENTERPRISE = "enterprise"  # >10000 sq ft
+
+
+class CrewRole(Enum):
+    PROJECT_MANAGER = "project_manager"
+    LEAD_INSTALLER = "lead_installer"
+    INSTALLER = "installer"
+    ELECTRICIAN = "electrician"
+    DECORATOR = "decorator"
+    DRIVER = "driver"
+
 
 @dataclass
-class Material:
-    """Material item specification"""
-    id: str
+class MaterialItem:
+    """Individual material item with costs and quantities"""
+    item_id: str
     name: str
-    material_type: MaterialType
-    quantity: int
+    category: MaterialCategory
     unit_cost: Decimal
-    supplier: str = ""
-    notes: str = ""
-    in_stock: bool = True
+    quantity_needed: int
+    quantity_ordered: int = 0
+    quantity_received: int = 0
+    supplier: Optional[str] = None
+    supplier_sku: Optional[str] = None
+    notes: Optional[str] = None
     
-    @property
     def total_cost(self) -> Decimal:
-        return self.quantity * self.unit_cost
+        return self.unit_cost * self.quantity_needed
+    
+    def is_fully_stocked(self) -> bool:
+        return self.quantity_received >= self.quantity_needed
+
 
 @dataclass
-class CrewAssignment:
-    """Crew assignment for installation"""
-    crew_id: str
-    crew_leader: str
-    crew_members: List[str]
-    size: CrewSize
+class CrewMember:
+    """Crew member with skills and availability"""
+    member_id: str
+    name: str
+    role: CrewRole
     hourly_rate: Decimal
-    
-    def total_labor_cost(self, hours: int) -> Decimal:
-        """Calculate total labor cost for given hours"""
-        return Decimal(self.size.value) * self.hourly_rate * Decimal(hours)
+    skills: List[str] = field(default_factory=list)
+    certifications: List[str] = field(default_factory=list)
+    phone: Optional[str] = None
+    email: Optional[str] = None
+
 
 @dataclass
-class Project:
-    """Holiday decoration project"""
-    id: str
-    client_name: str
-    client_contact: str
-    site_address: str
-    project_name: str
-    design_theme: DesignTheme
-    phase: ProjectPhase
-    budget_min: Decimal
-    budget_max: Decimal
-    current_cost: Decimal = Decimal('0.00')
+class InstallSchedule:
+    """Installation scheduling with crew assignments"""
+    schedule_id: str
+    project_id: str
+    install_date: date
+    start_time: datetime
+    estimated_hours: float
+    crew_members: List[str] = field(default_factory=list)  # member_ids
+    equipment_needed: List[str] = field(default_factory=list)
+    special_requirements: Optional[str] = None
+    weather_contingency: bool = True
     
-    # Dates
-    created_date: datetime = field(default_factory=datetime.now)
-    install_date: Optional[date] = None
-    takedown_date: Optional[date] = None
-    completion_date: Optional[datetime] = None
+    def estimated_end_time(self) -> datetime:
+        return self.start_time + timedelta(hours=self.estimated_hours)
+
+
+@dataclass
+class MaintenanceSchedule:
+    """Maintenance visit scheduling"""
+    maintenance_id: str
+    project_id: str
+    visit_date: date
+    visit_type: str  # "check", "repair", "adjustment"
+    assigned_crew: List[str] = field(default_factory=list)
+    estimated_hours: float = 1.0
+    completed: bool = False
+    notes: Optional[str] = None
+
+
+@dataclass
+class BudgetLineItem:
+    """Budget line item for P&L tracking"""
+    description: str
+    category: str
+    budgeted_amount: Decimal
+    actual_amount: Decimal = Decimal('0')
+    notes: Optional[str] = None
+
+
+@dataclass
+class HolidayProject:
+    """Complete holiday decoration project"""
+    project_id: str
+    client_name: str
+    project_name: str
+    location_address: str
+    contact_name: str
+    contact_phone: str
+    contact_email: str
     
     # Project details
-    materials: List[Material] = field(default_factory=list)
-    crew_assignment: Optional[CrewAssignment] = None
-    install_duration: InstallDuration = InstallDuration.MEDIUM
+    project_size: ProjectSize
+    square_footage: int
+    theme: DecorTheme
+    custom_requirements: Optional[str] = None
+    status: ProjectStatus = ProjectStatus.INTAKE
     
-    # Status tracking
-    requirements_notes: str = ""
-    design_approved: bool = False
-    materials_sourced: bool = False
-    installation_complete: bool = False
-    maintenance_schedule: List[date] = field(default_factory=list)
+    # Timeline
+    created_date: datetime = field(default_factory=datetime.now)
+    design_deadline: Optional[date] = None
+    install_start_date: Optional[date] = None
+    install_end_date: Optional[date] = None
+    takedown_date: Optional[date] = None
     
-    # Special considerations
-    special_requirements: List[str] = field(default_factory=list)
-    safety_notes: str = ""
+    # Materials and crew
+    materials: List[MaterialItem] = field(default_factory=list)
+    install_schedule: Optional[InstallSchedule] = None
+    maintenance_visits: List[MaintenanceSchedule] = field(default_factory=list)
     
-    def add_material(self, material: Material):
-        """Add material to project and update cost"""
-        self.materials.append(material)
-        self.current_cost += material.total_cost
+    # Budget tracking
+    budget_items: List[BudgetLineItem] = field(default_factory=list)
+    total_budget: Decimal = Decimal('0')
     
-    def calculate_total_cost(self) -> Decimal:
-        """Calculate total project cost including materials and labor"""
-        material_cost = sum(m.total_cost for m in self.materials)
-        
-        labor_cost = Decimal('0.00')
-        if self.crew_assignment:
-            labor_cost = self.crew_assignment.total_labor_cost(self.install_duration.value)
-        
-        return material_cost + labor_cost
+    # Project notes
+    design_notes: Optional[str] = None
+    install_notes: Optional[str] = None
+    client_feedback: Optional[str] = None
     
-    def is_within_budget(self) -> bool:
-        """Check if project is within budget constraints"""
-        total_cost = self.calculate_total_cost()
-        return self.budget_min <= total_cost <= self.budget_max
+    def calculate_material_cost(self) -> Decimal:
+        """Calculate total material costs"""
+        return sum(item.total_cost() for item in self.materials)
+    
+    def calculate_budget_variance(self) -> Decimal:
+        """Calculate budget variance (actual vs budgeted)"""
+        budgeted = sum(item.budgeted_amount for item in self.budget_items)
+        actual = sum(item.actual_amount for item in self.budget_items)
+        return actual - budgeted
+    
+    def is_materials_ready(self) -> bool:
+        """Check if all materials are fully stocked"""
+        return all(item.is_fully_stocked() for item in self.materials)
+    
+    def get_project_timeline_days(self) -> int:
+        """Calculate project timeline in days"""
+        if self.install_start_date and self.takedown_date:
+            return (self.takedown_date - self.install_start_date).days
+        return 0
+
 
 class HolidayDecorPlanner:
-    """Complete holiday decoration project management system"""
+    """Comprehensive holiday decor project management system"""
     
-    def __init__(self, db_path: str = "holiday_decor.db"):
-        """Initialize the holiday decor planner"""
-        self.db_path = db_path
-        self._init_database()
-        logger.info(f"Holiday Decor Planner initialized with database: {db_path}")
+    def __init__(self, data_directory: str = "./holiday_projects"):
+        import os
+        self.data_directory = data_directory
+        os.makedirs(data_directory, exist_ok=True)
+        
+        self.projects: Dict[str, HolidayProject] = {}
+        self.crew_members: Dict[str, CrewMember] = {}
+        self.theme_templates: Dict[DecorTheme, Dict] = self._initialize_theme_templates()
+        self.material_catalog: Dict[str, Dict] = self._initialize_material_catalog()
+        
+        # Load existing data
+        self._load_data()
     
-    def _init_database(self):
-        """Initialize SQLite database with required tables"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Projects table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS projects (
-                id TEXT PRIMARY KEY,
-                client_name TEXT NOT NULL,
-                client_contact TEXT NOT NULL,
-                site_address TEXT NOT NULL,
-                project_name TEXT NOT NULL,
-                design_theme TEXT NOT NULL,
-                phase TEXT NOT NULL,
-                budget_min DECIMAL NOT NULL,
-                budget_max DECIMAL NOT NULL,
-                current_cost DECIMAL DEFAULT 0.00,
-                created_date TEXT NOT NULL,
-                install_date TEXT,
-                takedown_date TEXT,
-                completion_date TEXT,
-                install_duration INTEGER NOT NULL,
-                requirements_notes TEXT DEFAULT '',
-                design_approved BOOLEAN DEFAULT 0,
-                materials_sourced BOOLEAN DEFAULT 0,
-                installation_complete BOOLEAN DEFAULT 0,
-                special_requirements TEXT DEFAULT '[]',
-                safety_notes TEXT DEFAULT '',
-                maintenance_schedule TEXT DEFAULT '[]'
-            )
-        ''')
-        
-        # Materials table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS materials (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                material_type TEXT NOT NULL,
-                quantity INTEGER NOT NULL,
-                unit_cost DECIMAL NOT NULL,
-                supplier TEXT DEFAULT '',
-                notes TEXT DEFAULT '',
-                in_stock BOOLEAN DEFAULT 1,
-                FOREIGN KEY (project_id) REFERENCES projects (id)
-            )
-        ''')
-        
-        # Crew assignments table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS crew_assignments (
-                crew_id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                crew_leader TEXT NOT NULL,
-                crew_members TEXT NOT NULL,
-                size INTEGER NOT NULL,
-                hourly_rate DECIMAL NOT NULL,
-                FOREIGN KEY (project_id) REFERENCES projects (id)
-            )
-        ''')
-        
-        # Create indexes
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_project_client ON projects(client_name)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_project_phase ON projects(phase)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_project_install_date ON projects(install_date)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_material_project ON materials(project_id)')
-        
-        conn.commit()
-        conn.close()
+    def _initialize_theme_templates(self) -> Dict[DecorTheme, Dict]:
+        """Initialize design theme templates with typical materials"""
+        return {
+            DecorTheme.CLASSIC_CHRISTMAS: {
+                "description": "Traditional red, gold, and green with warm white lights",
+                "typical_materials": [
+                    {"name": "Warm White LED String Lights", "category": "lights", "unit_cost": 25.00},
+                    {"name": "Red Velvet Ribbon", "category": "ribbon", "unit_cost": 8.50},
+                    {"name": "Gold Ball Ornaments", "category": "ornaments", "unit_cost": 12.00},
+                    {"name": "Fresh Pine Garland", "category": "garland", "unit_cost": 15.00},
+                    {"name": "Traditional Wreath 24\"", "category": "wreaths", "unit_cost": 45.00},
+                ],
+                "color_scheme": ["red", "gold", "green", "white"]
+            },
+            DecorTheme.WINTER_WONDERLAND: {
+                "description": "Silver, blue, and white with cool white lights and snowflakes",
+                "typical_materials": [
+                    {"name": "Cool White LED Lights", "category": "lights", "unit_cost": 28.00},
+                    {"name": "Silver Ribbon", "category": "ribbon", "unit_cost": 9.00},
+                    {"name": "Blue Glass Ornaments", "category": "ornaments", "unit_cost": 14.00},
+                    {"name": "Artificial Snow Garland", "category": "garland", "unit_cost": 18.00},
+                    {"name": "Snowflake Decorations", "category": "ornaments", "unit_cost": 22.00},
+                ],
+                "color_scheme": ["silver", "blue", "white", "ice blue"]
+            },
+            DecorTheme.MODERN_MINIMALIST: {
+                "description": "Clean lines, monochromatic colors, geometric shapes",
+                "typical_materials": [
+                    {"name": "White LED Strip Lights", "category": "lights", "unit_cost": 35.00},
+                    {"name": "Black Ribbon", "category": "ribbon", "unit_cost": 7.00},
+                    {"name": "Geometric Ornaments", "category": "ornaments", "unit_cost": 18.00},
+                    {"name": "Simple Line Garland", "category": "garland", "unit_cost": 12.00},
+                ],
+                "color_scheme": ["white", "black", "silver", "gray"]
+            },
+            DecorTheme.FESTIVE_CORPORATE: {
+                "description": "Professional yet festive, brand-appropriate colors",
+                "typical_materials": [
+                    {"name": "Neutral LED Lights", "category": "lights", "unit_cost": 30.00},
+                    {"name": "Company Color Ribbon", "category": "ribbon", "unit_cost": 10.00},
+                    {"name": "Corporate Branded Ornaments", "category": "ornaments", "unit_cost": 25.00},
+                    {"name": "Elegant Garland", "category": "garland", "unit_cost": 20.00},
+                ],
+                "color_scheme": ["custom", "gold", "silver", "white"]
+            },
+            DecorTheme.LUXURY_GOLD: {
+                "description": "Opulent gold and burgundy with premium materials",
+                "typical_materials": [
+                    {"name": "Warm Gold LED Lights", "category": "lights", "unit_cost": 45.00},
+                    {"name": "Burgundy Velvet Ribbon", "category": "ribbon", "unit_cost": 15.00},
+                    {"name": "Gold Glass Ornaments", "category": "ornaments", "unit_cost": 28.00},
+                    {"name": "Premium Gold Garland", "category": "garland", "unit_cost": 35.00},
+                    {"name": "Luxury Bow Arrangements", "category": "bows", "unit_cost": 65.00},
+                ],
+                "color_scheme": ["gold", "burgundy", "cream", "bronze"]
+            },
+            DecorTheme.NYC_LIGHTS: {
+                "description": "Metropolitan style with multicolor lights and urban elements",
+                "typical_materials": [
+                    {"name": "Multicolor LED Lights", "category": "lights", "unit_cost": 32.00},
+                    {"name": "Metallic Ribbon", "category": "ribbon", "unit_cost": 11.00},
+                    {"name": "NYC-themed Ornaments", "category": "ornaments", "unit_cost": 20.00},
+                    {"name": "Urban Style Garland", "category": "garland", "unit_cost": 22.00},
+                ],
+                "color_scheme": ["red", "blue", "gold", "white", "green"]
+            },
+            DecorTheme.HANUKKAH: {
+                "description": "Traditional blue and white with Jewish holiday elements",
+                "typical_materials": [
+                    {"name": "Blue and White LED Lights", "category": "lights", "unit_cost": 30.00},
+                    {"name": "Blue Ribbon", "category": "ribbon", "unit_cost": 9.00},
+                    {"name": "Star of David Ornaments", "category": "ornaments", "unit_cost": 16.00},
+                    {"name": "Hanukkah Garland", "category": "garland", "unit_cost": 18.00},
+                    {"name": "Menorah Display", "category": "installations", "unit_cost": 85.00},
+                ],
+                "color_scheme": ["blue", "white", "silver"]
+            },
+            DecorTheme.MULTI_FAITH: {
+                "description": "Inclusive winter celebration without religious symbols",
+                "typical_materials": [
+                    {"name": "Warm White LED Lights", "category": "lights", "unit_cost": 25.00},
+                    {"name": "Gold Ribbon", "category": "ribbon", "unit_cost": 8.00},
+                    {"name": "Winter Scene Ornaments", "category": "ornaments", "unit_cost": 15.00},
+                    {"name": "Seasonal Garland", "category": "garland", "unit_cost": 16.00},
+                ],
+                "color_scheme": ["gold", "white", "green", "burgundy"]
+            }
+        }
+    
+    def _initialize_material_catalog(self) -> Dict[str, Dict]:
+        """Initialize comprehensive material catalog"""
+        return {
+            # Lights
+            "led_string_warm": {"name": "Warm White LED String Lights", "category": "lights", "unit_cost": 25.00, "unit": "50ft strand"},
+            "led_string_cool": {"name": "Cool White LED String Lights", "category": "lights", "unit_cost": 28.00, "unit": "50ft strand"},
+            "led_icicle": {"name": "LED Icicle Lights", "category": "lights", "unit_cost": 35.00, "unit": "25ft strand"},
+            "led_net": {"name": "LED Net Lights", "category": "lights", "unit_cost": 40.00, "unit": "4x6ft net"},
+            
+            # Trees
+            "fraser_fir_6ft": {"name": "Fraser Fir Christmas Tree 6ft", "category": "trees", "unit_cost": 150.00, "unit": "each"},
+            "fraser_fir_8ft": {"name": "Fraser Fir Christmas Tree 8ft", "category": "trees", "unit_cost": 225.00, "unit": "each"},
+            "noble_fir_10ft": {"name": "Noble Fir Christmas Tree 10ft", "category": "trees", "unit_cost": 350.00, "unit": "each"},
+            "artificial_tree_6ft": {"name": "Premium Artificial Tree 6ft", "category": "trees", "unit_cost": 280.00, "unit": "each"},
+            
+            # Garland
+            "fresh_pine_garland": {"name": "Fresh Pine Garland", "category": "garland", "unit_cost": 15.00, "unit": "per foot"},
+            "artificial_garland": {"name": "Artificial Pine Garland", "category": "garland", "unit_cost": 12.00, "unit": "per foot"},
+            "magnolia_garland": {"name": "Magnolia Leaf Garland", "category": "garland", "unit_cost": 18.00, "unit": "per foot"},
+            
+            # Wreaths
+            "wreath_18": {"name": "Fresh Wreath 18 inch", "category": "wreaths", "unit_cost": 35.00, "unit": "each"},
+            "wreath_24": {"name": "Fresh Wreath 24 inch", "category": "wreaths", "unit_cost": 45.00, "unit": "each"},
+            "wreath_30": {"name": "Fresh Wreath 30 inch", "category": "wreaths", "unit_cost": 65.00, "unit": "each"},
+        }
+    
+    def _load_data(self):
+        """Load existing project and crew data"""
+        # Implementation would load from JSON files
+        pass
+    
+    def _save_data(self):
+        """Save project and crew data to JSON files"""
+        # Implementation would save to JSON files
+        pass
     
     def create_project(self,
                       client_name: str,
-                      client_contact: str,
-                      site_address: str,
                       project_name: str,
-                      design_theme: DesignTheme,
-                      budget_min: Decimal,
-                      budget_max: Decimal,
-                      special_requirements: List[str] = None) -> str:
-        """
-        Create a new holiday decoration project
+                      location_address: str,
+                      contact_name: str,
+                      contact_phone: str,
+                      contact_email: str,
+                      project_size: ProjectSize,
+                      square_footage: int,
+                      theme: DecorTheme = DecorTheme.CLASSIC_CHRISTMAS,
+                      custom_requirements: str = None) -> str:
+        """Create a new holiday decoration project"""
         
-        Returns:
-            Project ID
-        """
-        project_id = f"HD_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{client_name[:3].upper()}"
+        project_id = str(uuid.uuid4())[:8].upper()
         
-        project = Project(
-            id=project_id,
+        # Set typical deadlines based on current date
+        today = date.today()
+        design_deadline = date(today.year, 11, 15)  # Mid-November
+        install_start = date(today.year, 11, 25)    # Week of Thanksgiving
+        takedown = date(today.year + 1, 1, 15)      # Mid-January
+        
+        project = HolidayProject(
+            project_id=project_id,
             client_name=client_name,
-            client_contact=client_contact,
-            site_address=site_address,
             project_name=project_name,
-            design_theme=design_theme,
-            phase=ProjectPhase.REQUIREMENTS,
-            budget_min=budget_min,
-            budget_max=budget_max,
-            special_requirements=special_requirements or []
+            location_address=location_address,
+            contact_name=contact_name,
+            contact_phone=contact_phone,
+            contact_email=contact_email,
+            project_size=project_size,
+            square_footage=square_footage,
+            theme=theme,
+            custom_requirements=custom_requirements,
+            design_deadline=design_deadline,
+            install_start_date=install_start,
+            takedown_date=takedown
         )
         
-        self._insert_project(project)
-        logger.info(f"Created project: {project_id} for {client_name}")
+        # Add initial budget estimates based on project size
+        self._generate_initial_budget(project)
+        
+        self.projects[project_id] = project
+        self._save_data()
+        
         return project_id
     
-    def _insert_project(self, project: Project):
-        """Insert project into database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO projects (
-                id, client_name, client_contact, site_address, project_name,
-                design_theme, phase, budget_min, budget_max, current_cost,
-                created_date, install_date, takedown_date, completion_date,
-                install_duration, requirements_notes, design_approved,
-                materials_sourced, installation_complete, special_requirements,
-                safety_notes, maintenance_schedule
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            project.id, project.client_name, project.client_contact,
-            project.site_address, project.project_name, project.design_theme.value,
-            project.phase.value, float(project.budget_min), float(project.budget_max),
-            float(project.current_cost), project.created_date.isoformat(),
-            project.install_date.isoformat() if project.install_date else None,
-            project.takedown_date.isoformat() if project.takedown_date else None,
-            project.completion_date.isoformat() if project.completion_date else None,
-            project.install_duration.value, project.requirements_notes,
-            project.design_approved, project.materials_sourced,
-            project.installation_complete, json.dumps(project.special_requirements),
-            project.safety_notes, json.dumps([d.isoformat() for d in project.maintenance_schedule])
-        ))
-        
-        conn.commit()
-        conn.close()
-    
-    def get_project(self, project_id: str) -> Optional[Project]:
-        """Retrieve project by ID"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM projects WHERE id = ?', (project_id,))
-        row = cursor.fetchone()
-        
-        if not row:
-            conn.close()
-            return None
-        
-        # Get materials
-        cursor.execute('SELECT * FROM materials WHERE project_id = ?', (project_id,))
-        material_rows = cursor.fetchall()
-        
-        # Get crew assignment
-        cursor.execute('SELECT * FROM crew_assignments WHERE project_id = ?', (project_id,))
-        crew_row = cursor.fetchone()
-        
-        conn.close()
-        
-        project = self._row_to_project(row, material_rows, crew_row)
-        return project
-    
-    def _row_to_project(self, row, material_rows=None, crew_row=None) -> Project:
-        """Convert database row to Project object"""
-        materials = []
-        if material_rows:
-            for m_row in material_rows:
-                material = Material(
-                    id=m_row[0],
-                    name=m_row[2],
-                    material_type=MaterialType(m_row[3]),
-                    quantity=m_row[4],
-                    unit_cost=Decimal(str(m_row[5])),
-                    supplier=m_row[6] or "",
-                    notes=m_row[7] or "",
-                    in_stock=bool(m_row[8])
-                )
-                materials.append(material)
-        
-        crew_assignment = None
-        if crew_row:
-            crew_assignment = CrewAssignment(
-                crew_id=crew_row[0],
-                crew_leader=crew_row[2],
-                crew_members=json.loads(crew_row[3]),
-                size=CrewSize(crew_row[4]),
-                hourly_rate=Decimal(str(crew_row[5]))
-            )
-        
-        # Parse maintenance schedule
-        maintenance_schedule = []
-        if row[21]:
-            schedule_data = json.loads(row[21])
-            maintenance_schedule = [date.fromisoformat(d) for d in schedule_data]
-        
-        return Project(
-            id=row[0],
-            client_name=row[1],
-            client_contact=row[2],
-            site_address=row[3],
-            project_name=row[4],
-            design_theme=DesignTheme(row[5]),
-            phase=ProjectPhase(row[6]),
-            budget_min=Decimal(str(row[7])),
-            budget_max=Decimal(str(row[8])),
-            current_cost=Decimal(str(row[9])),
-            created_date=datetime.fromisoformat(row[10]),
-            install_date=date.fromisoformat(row[11]) if row[11] else None,
-            takedown_date=date.fromisoformat(row[12]) if row[12] else None,
-            completion_date=datetime.fromisoformat(row[13]) if row[13] else None,
-            materials=materials,
-            crew_assignment=crew_assignment,
-            install_duration=InstallDuration(row[14]),
-            requirements_notes=row[15] or "",
-            design_approved=bool(row[16]),
-            materials_sourced=bool(row[17]),
-            installation_complete=bool(row[18]),
-            special_requirements=json.loads(row[19]) if row[19] else [],
-            safety_notes=row[20] or "",
-            maintenance_schedule=maintenance_schedule
-        )
-    
-    def update_project_phase(self, project_id: str, new_phase: ProjectPhase) -> bool:
-        """Update project phase"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            UPDATE projects 
-            SET phase = ?
-            WHERE id = ?
-        ''', (new_phase.value, project_id))
-        
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        
-        if success:
-            logger.info(f"Updated project {project_id} to phase {new_phase.value}")
-        
-        return success
-    
-    def add_material_to_project(self, project_id: str, material: Material) -> bool:
-        """Add material to project"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Insert material
-        cursor.execute('''
-            INSERT INTO materials (
-                id, project_id, name, material_type, quantity, unit_cost,
-                supplier, notes, in_stock
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            material.id, project_id, material.name, material.material_type.value,
-            material.quantity, float(material.unit_cost), material.supplier,
-            material.notes, material.in_stock
-        ))
-        
-        # Update project current cost
-        cursor.execute('''
-            UPDATE projects 
-            SET current_cost = current_cost + ?
-            WHERE id = ?
-        ''', (float(material.total_cost), project_id))
-        
-        conn.commit()
-        conn.close()
-        
-        logger.info(f"Added material {material.name} to project {project_id}")
-        return True
-    
-    def assign_crew(self, project_id: str, crew_assignment: CrewAssignment) -> bool:
-        """Assign crew to project"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Delete existing assignment if any
-        cursor.execute('DELETE FROM crew_assignments WHERE project_id = ?', (project_id,))
-        
-        # Insert new assignment
-        cursor.execute('''
-            INSERT INTO crew_assignments (
-                crew_id, project_id, crew_leader, crew_members, size, hourly_rate
-            ) VALUES (?, ?, ?, ?, ?, ?)
-        ''', (
-            crew_assignment.crew_id, project_id, crew_assignment.crew_leader,
-            json.dumps(crew_assignment.crew_members), crew_assignment.size.value,
-            float(crew_assignment.hourly_rate)
-        ))
-        
-        conn.commit()
-        conn.close()
-        
-        logger.info(f"Assigned crew {crew_assignment.crew_id} to project {project_id}")
-        return True
-    
-    def schedule_installation(self, project_id: str, install_date: date, duration: InstallDuration) -> bool:
-        """Schedule installation for project"""
-        # Auto-calculate takedown date (typically Jan 2-15)
-        if install_date.month in [11, 12]:  # Nov/Dec installation
-            takedown_year = install_date.year + 1
-            takedown_date = date(takedown_year, 1, 7)  # Default Jan 7th
-        else:
-            takedown_date = install_date + timedelta(days=45)  # 45-day default
-        
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            UPDATE projects 
-            SET install_date = ?, takedown_date = ?, install_duration = ?
-            WHERE id = ?
-        ''', (install_date.isoformat(), takedown_date.isoformat(), 
-              duration.value, project_id))
-        
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        
-        if success:
-            logger.info(f"Scheduled installation for project {project_id}: {install_date} -> {takedown_date}")
-        
-        return success
-    
-    def get_active_projects(self) -> List[Project]:
-        """Get all active projects (not completed or cancelled)"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT * FROM projects 
-            WHERE phase NOT IN (?, ?)
-            ORDER BY install_date ASC, created_date ASC
-        ''', (ProjectPhase.COMPLETED.value, ProjectPhase.CANCELLED.value))
-        
-        rows = cursor.fetchall()
-        conn.close()
-        
-        projects = []
-        for row in rows:
-            project = self.get_project(row[0])  # Get full project with materials/crew
-            if project:
-                projects.append(project)
-        
-        return projects
-    
-    def get_dashboard_summary(self) -> Dict:
-        """Get dashboard summary for managing multiple projects"""
-        projects = self.get_active_projects()
-        
-        summary = {
-            "total_active_projects": len(projects),
-            "by_phase": {},
-            "by_theme": {},
-            "installations_this_week": 0,
-            "takedowns_this_week": 0,
-            "total_revenue": Decimal('0.00'),
-            "average_project_value": Decimal('0.00'),
-            "crew_utilization": {},
-            "urgent_tasks": []
+    def _generate_initial_budget(self, project: HolidayProject):
+        """Generate initial budget estimates based on project size"""
+        size_multipliers = {
+            ProjectSize.SMALL: Decimal('1.0'),
+            ProjectSize.MEDIUM: Decimal('2.5'),
+            ProjectSize.LARGE: Decimal('5.0'),
+            ProjectSize.ENTERPRISE: Decimal('10.0')
         }
         
-        # Current week dates
-        today = date.today()
-        week_start = today - timedelta(days=today.weekday())
-        week_end = week_start + timedelta(days=6)
+        multiplier = size_multipliers.get(project.project_size, Decimal('1.0'))
         
-        for project in projects:
-            # Count by phase
-            phase = project.phase.value
-            summary["by_phase"][phase] = summary["by_phase"].get(phase, 0) + 1
-            
-            # Count by theme
-            theme = project.design_theme.value
-            summary["by_theme"][theme] = summary["by_theme"].get(theme, 0) + 1
-            
-            # Check installations/takedowns this week
-            if project.install_date and week_start <= project.install_date <= week_end:
-                summary["installations_this_week"] += 1
-            
-            if project.takedown_date and week_start <= project.takedown_date <= week_end:
-                summary["takedowns_this_week"] += 1
-            
-            # Revenue calculation
-            project_value = project.calculate_total_cost()
-            summary["total_revenue"] += project_value
-            
-            # Crew utilization
-            if project.crew_assignment:
-                crew_leader = project.crew_assignment.crew_leader
-                summary["crew_utilization"][crew_leader] = summary["crew_utilization"].get(crew_leader, 0) + 1
-            
-            # Urgent tasks
-            if project.install_date and (project.install_date - today).days <= 7:
-                if not project.materials_sourced:
-                    summary["urgent_tasks"].append(f"Materials needed: {project.project_name}")
-                if not project.crew_assignment:
-                    summary["urgent_tasks"].append(f"Crew assignment needed: {project.project_name}")
+        # Base budget items
+        base_materials = Decimal('2500') * multiplier
+        base_labor = Decimal('1800') * multiplier
+        base_equipment = Decimal('400') * multiplier
         
-        # Calculate average project value
-        if projects:
-            summary["average_project_value"] = summary["total_revenue"] / len(projects)
+        project.budget_items = [
+            BudgetLineItem("Materials & Supplies", "materials", base_materials),
+            BudgetLineItem("Installation Labor", "labor", base_labor),
+            BudgetLineItem("Equipment Rental", "equipment", base_equipment),
+            BudgetLineItem("Travel & Transportation", "travel", Decimal('300')),
+            BudgetLineItem("Maintenance Visits", "maintenance", Decimal('500')),
+            BudgetLineItem("Takedown Labor", "takedown", base_labor * Decimal('0.6')),
+        ]
         
-        # Round monetary values
-        summary["total_revenue"] = summary["total_revenue"].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        summary["average_project_value"] = summary["average_project_value"].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        
-        return summary
+        project.total_budget = sum(item.budgeted_amount for item in project.budget_items)
     
-    def generate_installation_schedule(self, start_date: date, end_date: date) -> List[Dict]:
-        """Generate installation schedule for date range"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+    def add_materials_from_theme(self, project_id: str) -> bool:
+        """Add typical materials based on selected theme"""
+        if project_id not in self.projects:
+            return False
         
-        cursor.execute('''
-            SELECT p.*, ca.crew_leader, ca.crew_members, ca.size
-            FROM projects p
-            LEFT JOIN crew_assignments ca ON p.id = ca.project_id
-            WHERE p.install_date >= ? AND p.install_date <= ?
-            AND p.phase NOT IN (?, ?)
-            ORDER BY p.install_date ASC, ca.crew_leader
-        ''', (start_date.isoformat(), end_date.isoformat(),
-              ProjectPhase.COMPLETED.value, ProjectPhase.CANCELLED.value))
+        project = self.projects[project_id]
+        theme_template = self.theme_templates.get(project.theme)
         
-        rows = cursor.fetchall()
-        conn.close()
+        if not theme_template:
+            return False
         
-        schedule = []
-        for row in rows:
-            schedule_item = {
-                "date": row[11],  # install_date
-                "project_id": row[0],
-                "project_name": row[4],
-                "client_name": row[1],
-                "site_address": row[3],
-                "duration_hours": row[14],  # install_duration
-                "crew_leader": row[22] if len(row) > 22 else "Unassigned",
-                "crew_size": row[24] if len(row) > 24 else "Unknown",
-                "design_theme": row[5]
-            }
-            schedule.append(schedule_item)
+        # Calculate quantities based on square footage
+        sqft_factor = project.square_footage / 1000  # Base factor per 1000 sq ft
         
-        return schedule
+        for material_template in theme_template["typical_materials"]:
+            # Estimate quantity based on material type and space
+            if material_template["category"] == "lights":
+                quantity = max(1, int(sqft_factor * 4))  # 4 strands per 1000 sq ft
+            elif material_template["category"] == "garland":
+                quantity = max(10, int(sqft_factor * 50))  # 50 feet per 1000 sq ft
+            elif material_template["category"] == "wreaths":
+                quantity = max(1, int(sqft_factor * 2))  # 2 wreaths per 1000 sq ft
+            else:
+                quantity = max(1, int(sqft_factor * 3))  # 3 units per 1000 sq ft
+            
+            material = MaterialItem(
+                item_id=str(uuid.uuid4())[:8],
+                name=material_template["name"],
+                category=MaterialCategory(material_template["category"]),
+                unit_cost=Decimal(str(material_template["unit_cost"])),
+                quantity_needed=quantity
+            )
+            
+            project.materials.append(material)
+        
+        project.status = ProjectStatus.DESIGN
+        self._save_data()
+        return True
     
-    def get_material_requirements(self) -> Dict[MaterialType, Dict]:
-        """Get aggregated material requirements across all active projects"""
-        projects = self.get_active_projects()
+    def schedule_installation(self,
+                            project_id: str,
+                            install_date: date,
+                            start_time: datetime,
+                            crew_member_ids: List[str],
+                            estimated_hours: float,
+                            equipment_needed: List[str] = None) -> bool:
+        """Schedule installation for a project"""
+        if project_id not in self.projects:
+            return False
         
-        requirements = {}
-        for material_type in MaterialType:
-            requirements[material_type] = {
-                "total_quantity": 0,
-                "total_cost": Decimal('0.00'),
-                "projects": [],
-                "suppliers": set()
-            }
+        project = self.projects[project_id]
         
-        for project in projects:
-            for material in project.materials:
-                mat_type = material.material_type
-                requirements[mat_type]["total_quantity"] += material.quantity
-                requirements[mat_type]["total_cost"] += material.total_cost
-                requirements[mat_type]["projects"].append(project.project_name)
-                if material.supplier:
-                    requirements[mat_type]["suppliers"].add(material.supplier)
+        schedule = InstallSchedule(
+            schedule_id=str(uuid.uuid4())[:8],
+            project_id=project_id,
+            install_date=install_date,
+            start_time=start_time,
+            estimated_hours=estimated_hours,
+            crew_members=crew_member_ids,
+            equipment_needed=equipment_needed or []
+        )
         
-        # Convert sets to lists and round costs
-        for mat_type in requirements:
-            requirements[mat_type]["suppliers"] = list(requirements[mat_type]["suppliers"])
-            requirements[mat_type]["total_cost"] = requirements[mat_type]["total_cost"].quantize(
-                Decimal('0.01'), rounding=ROUND_HALF_UP)
+        project.install_schedule = schedule
+        project.install_start_date = install_date
+        project.status = ProjectStatus.SCHEDULED
         
-        return requirements
+        self._save_data()
+        return True
+    
+    def add_maintenance_visit(self,
+                            project_id: str,
+                            visit_date: date,
+                            visit_type: str = "check",
+                            assigned_crew: List[str] = None,
+                            estimated_hours: float = 2.0) -> str:
+        """Schedule a maintenance visit"""
+        if project_id not in self.projects:
+            return ""
+        
+        maintenance_id = str(uuid.uuid4())[:8]
+        
+        maintenance = MaintenanceSchedule(
+            maintenance_id=maintenance_id,
+            project_id=project_id,
+            visit_date=visit_date,
+            visit_type=visit_type,
+            assigned_crew=assigned_crew or [],
+            estimated_hours=estimated_hours
+        )
+        
+        self.projects[project_id].maintenance_visits.append(maintenance)
+        self._save_data()
+        
+        return maintenance_id
+    
+    def get_project_dashboard(self, status_filter: ProjectStatus = None) -> Dict:
+        """Generate multi-project dashboard view"""
+        projects = list(self.projects.values())
+        
+        if status_filter:
+            projects = [p for p in projects if p.status == status_filter]
+        
+        # Group by status
+        status_groups = {}
+        for status in ProjectStatus:
+            status_groups[status] = [p for p in projects if p.status == status]
+        
+        # Calculate totals
+        total_budget = sum(p.total_budget for p in projects)
+        total_sqft = sum(p.square_footage for p in projects)
+        
+        return {
+            "total_projects": len(projects),
+            "projects_by_status": {status.value: len(group) for status, group in status_groups.items()},
+            "total_budget": total_budget,
+            "total_square_footage": total_sqft,
+            "upcoming_installations": self._get_upcoming_installations(),
+            "maintenance_due": self._get_maintenance_due(),
+            "materials_needed": self._get_materials_summary()
+        }
+    
+    def _get_upcoming_installations(self) -> List[Dict]:
+        """Get installations scheduled for next 14 days"""
+        cutoff = date.today() + timedelta(days=14)
+        upcoming = []
+        
+        for project in self.projects.values():
+            if (project.install_schedule and 
+                project.install_schedule.install_date <= cutoff and
+                project.status in [ProjectStatus.SCHEDULED, ProjectStatus.IN_PROGRESS]):
+                
+                upcoming.append({
+                    "project_id": project.project_id,
+                    "client_name": project.client_name,
+                    "install_date": project.install_schedule.install_date,
+                    "estimated_hours": project.install_schedule.estimated_hours,
+                    "crew_size": len(project.install_schedule.crew_members)
+                })
+        
+        return sorted(upcoming, key=lambda x: x["install_date"])
+    
+    def _get_maintenance_due(self) -> List[Dict]:
+        """Get maintenance visits due in next 7 days"""
+        cutoff = date.today() + timedelta(days=7)
+        due = []
+        
+        for project in self.projects.values():
+            for visit in project.maintenance_visits:
+                if not visit.completed and visit.visit_date <= cutoff:
+                    due.append({
+                        "project_id": project.project_id,
+                        "client_name": project.client_name,
+                        "visit_date": visit.visit_date,
+                        "visit_type": visit.visit_type,
+                        "estimated_hours": visit.estimated_hours
+                    })
+        
+        return sorted(due, key=lambda x: x["visit_date"])
+    
+    def _get_materials_summary(self) -> Dict:
+        """Get summary of materials needed across all active projects"""
+        materials_summary = {}
+        
+        for project in self.projects.values():
+            if project.status in [ProjectStatus.SOURCING, ProjectStatus.SCHEDULED]:
+                for material in project.materials:
+                    if not material.is_fully_stocked():
+                        key = material.name
+                        if key not in materials_summary:
+                            materials_summary[key] = {
+                                "total_needed": 0,
+                                "total_cost": Decimal('0'),
+                                "projects": []
+                            }
+                        
+                        needed = material.quantity_needed - material.quantity_received
+                        materials_summary[key]["total_needed"] += needed
+                        materials_summary[key]["total_cost"] += material.unit_cost * needed
+                        materials_summary[key]["projects"].append(project.project_id)
+        
+        return materials_summary
+    
+    def generate_timeline_report(self) -> str:
+        """Generate holiday season timeline report"""
+        output = []
+        output.append("CAMBRIDGE NY HOLIDAY DECOR - SEASON TIMELINE")
+        output.append("=" * 55)
+        output.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        output.append("")
+        
+        # Group projects by key dates
+        design_phase = []
+        sourcing_phase = []
+        installation_phase = []
+        maintenance_phase = []
+        takedown_phase = []
+        
+        for project in self.projects.values():
+            if project.status == ProjectStatus.DESIGN:
+                design_phase.append(project)
+            elif project.status == ProjectStatus.SOURCING:
+                sourcing_phase.append(project)
+            elif project.status in [ProjectStatus.SCHEDULED, ProjectStatus.IN_PROGRESS]:
+                installation_phase.append(project)
+            elif project.status == ProjectStatus.INSTALLED:
+                maintenance_phase.append(project)
+            elif project.status == ProjectStatus.TAKEDOWN_SCHEDULED:
+                takedown_phase.append(project)
+        
+        # Design Phase (Mid November)
+        output.append("🎨 DESIGN PHASE (Target: Nov 15)")
+        output.append("-" * 35)
+        if design_phase:
+            for project in design_phase:
+                output.append(f"  • {project.client_name} - {project.project_name}")
+                output.append(f"    Size: {project.project_size.value} ({project.square_footage:,} sq ft)")
+                output.append(f"    Theme: {project.theme.value.replace('_', ' ').title()}")
+        else:
+            output.append("  No projects in design phase")
+        output.append("")
+        
+        # Installation Phase (Thanksgiving Week)
+        output.append("🔧 INSTALLATION PHASE (Target: Nov 25 - Dec 15)")
+        output.append("-" * 50)
+        if installation_phase:
+            for project in installation_phase:
+                install_date = project.install_start_date or "TBD"
+                output.append(f"  • {project.client_name} - Install: {install_date}")
+                if project.install_schedule:
+                    output.append(f"    Crew: {len(project.install_schedule.crew_members)} members, {project.install_schedule.estimated_hours}h")
+        else:
+            output.append("  No installations scheduled")
+        output.append("")
+        
+        # Maintenance Phase (December - January)
+        output.append("🔍 MAINTENANCE PHASE (Dec - Jan)")
+        output.append("-" * 35)
+        if maintenance_phase:
+            for project in maintenance_phase:
+                visits = len([v for v in project.maintenance_visits if not v.completed])
+                output.append(f"  • {project.client_name} - {visits} visits remaining")
+        else:
+            output.append("  No projects in maintenance")
+        output.append("")
+        
+        # Takedown Phase (Mid January)
+        output.append("📦 TAKEDOWN PHASE (Target: Jan 15)")
+        output.append("-" * 35)
+        if takedown_phase:
+            for project in takedown_phase:
+                output.append(f"  • {project.client_name} - Takedown: {project.takedown_date}")
+        else:
+            output.append("  No takedowns scheduled")
+        
+        return "\n".join(output)
 
 
-def main():
-    """Example usage and testing"""
-    planner = HolidayDecorPlanner("test_holiday_decor.db")
+# Example Usage
+if __name__ == "__main__":
+    planner = HolidayDecorPlanner()
     
-    print("Holiday Decor Planner initialized successfully!")
+    print("=== Cambridge NY Holiday Decor Planner Examples ===\n")
     
-    # Example: Create a project
+    # Example 1: Create a large commercial project
+    print("1. CREATING LARGE COMMERCIAL PROJECT")
+    print("-" * 40)
+    
     project_id = planner.create_project(
-        client_name="Manhattan Office Building LLC",
-        client_contact="John Smith (555-0123)",
-        site_address="123 Madison Ave, New York, NY 10016",
-        project_name="Corporate Holiday Display 2024",
-        design_theme=DesignTheme.FESTIVE_CORPORATE,
-        budget_min=Decimal('15000.00'),
-        budget_max=Decimal('25000.00'),
-        special_requirements=["Must be fireproof", "LED lights only", "No live trees"]
+        client_name="One World Trade Center",
+        project_name="Main Lobby Holiday Display",
+        location_address="285 Fulton St, New York, NY 10007",
+        contact_name="Sarah Johnson",
+        contact_phone="212-555-0199",
+        contact_email="s.johnson@1wtc.com",
+        project_size=ProjectSize.ENTERPRISE,
+        square_footage=15000,
+        theme=DecorTheme.LUXURY_GOLD,
+        custom_requirements="Must incorporate building's architectural elements, 30ft Christmas tree centerpiece"
     )
     
     print(f"Created project: {project_id}")
     
-    # Example: Add materials
-    lights_material = Material(
-        id="MAT_001",
-        name="LED String Lights (Commercial Grade)",
-        material_type=MaterialType.LIGHTS,
-        quantity=50,
-        unit_cost=Decimal('45.00'),
-        supplier="NYC Holiday Supply Co"
+    # Add theme-based materials
+    planner.add_materials_from_theme(project_id)
+    print("Added materials based on Luxury Gold theme")
+    
+    # Example 2: Create medium corporate project
+    print("\n2. CREATING MEDIUM CORPORATE PROJECT")
+    print("-" * 40)
+    
+    corp_project_id = planner.create_project(
+        client_name="Goldman Sachs",
+        project_name="Executive Floor Holiday Decor",
+        location_address="200 West St, New York, NY 10282",
+        contact_name="Michael Chen",
+        contact_phone="212-555-0288",
+        contact_email="m.chen@gs.com",
+        project_size=ProjectSize.MEDIUM,
+        square_footage=4500,
+        theme=DecorTheme.FESTIVE_CORPORATE
     )
     
-    planner.add_material_to_project(project_id, lights_material)
+    planner.add_materials_from_theme(corp_project_id)
+    print(f"Created corporate project: {corp_project_id}")
     
-    # Example: Get dashboard summary
-    summary = planner.get_dashboard_summary()
-    print(f"\nDashboard Summary:")
-    print(f"Active Projects: {summary['total_active_projects']}")
-    print(f"Total Revenue: ${summary['total_revenue']}")
-    print(f"Installations This Week: {summary['installations_this_week']}")
-
-
-if __name__ == "__main__":
-    main()
+    # Example 3: Schedule installation
+    print("\n3. SCHEDULING INSTALLATION")
+    print("-" * 40)
+    
+    install_date = date(2024, 11, 28)  # Day after Thanksgiving
+    start_time = datetime(2024, 11, 28, 7, 0)  # 7 AM start
+    
+    planner.schedule_installation(
+        project_id=project_id,
+        install_date=install_date,
+        start_time=start_time,
+        crew_member_ids=["CREW001", "CREW002", "CREW003", "CREW004"],
+        estimated_hours=12.0,
+        equipment_needed=["lift_30ft", "van_large", "power_tools"]
+    )
+    
+    print(f"Scheduled installation for {install_date} at {start_time.strftime('%H:%M')}")
+    
+    # Example 4: Add maintenance visits
+    print("\n4. SCHEDULING MAINTENANCE")
+    print("-" * 40)
+    
+    # Christmas week check
+    visit1 = planner.add_maintenance_visit(
+        project_id=project_id,
+        visit_date=date(2024, 12, 23),
+        visit_type="check",
+        assigned_crew=["CREW001"],
+        estimated_hours=2.0
+    )
+    
+    # New Year's check
+    visit2 = planner.add_maintenance_visit(
+        project_id=project_id,
+        visit_date=date(2025, 1, 2),
+        visit_type="adjustment",
+        assigned_crew=["CREW001", "CREW002"],
+        estimated_hours=3.0
+    )
+    
+    print(f"Scheduled maintenance visits: {visit1}, {visit2}")
+    
+    # Example 5: Generate dashboard
+    print("\n5. PROJECT DASHBOARD")
+    print("-" * 40)
+    
+    dashboard = planner.get_project_dashboard()
+    
+    print(f"Total Projects: {dashboard['total_projects']}")
+    print(f"Total Budget: ${dashboard['total_budget']:,.2f}")
+    print(f"Total Square Footage: {dashboard['total_square_footage']:,}")
+    print(f"\nProjects by Status:")
+    for status, count in dashboard['projects_by_status'].items():
+        if count > 0:
+            print(f"  • {status.replace('_', ' ').title()}: {count}")
+    
+    print(f"\nUpcoming Installations ({len(dashboard['upcoming_installations'])}):")
+    for install in dashboard['upcoming_installations']:
+        print(f"  • {install['client_name']} - {install['install_date']}")
+    
+    # Example 6: Generate timeline report
+    print("\n6. SEASON TIMELINE REPORT")
+    print("-" * 40)
+    
+    timeline_report = planner.generate_timeline_report()
+    print(timeline_report)
